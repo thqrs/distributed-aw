@@ -1,0 +1,56 @@
+version: 2.1
+
+parameters:
+  run_training:
+    type: boolean
+    default: false
+  campaign:
+    type: string
+    default: "breadth-100k"
+  parallelism:
+    type: integer
+    default: 1
+  workers:
+    type: integer
+    default: 2
+  seeds_per_job:
+    type: integer
+    default: 0
+  site:
+    type: string
+    default: "https://awbw.vitamindanswers.com/ai-training"
+
+jobs:
+  ai-training:
+    docker:
+      - image: cimg/node:20.19
+    resource_class: medium
+    parallelism: << pipeline.parameters.parallelism >>
+    steps:
+      - checkout
+      - run:
+          name: Run distributed AW training worker
+          no_output_timeout: 10m
+          command: |
+            if [ -z "${AI_TRAINING_KEY:-}" ]; then
+              echo "CircleCI project environment variable AI_TRAINING_KEY is missing." >&2
+              exit 2
+            fi
+
+            node ai-training/remote-worker.mjs \
+              --url "<< pipeline.parameters.site >>" \
+              --campaign "<< pipeline.parameters.campaign >>" \
+              --workers "<< pipeline.parameters.workers >>" \
+              --limit "<< pipeline.parameters.seeds_per_job >>" \
+              --claim auto \
+              --claim-minutes 10 \
+              --submit-batch 16 \
+              --max-minutes 55 \
+              --device-id "circleci-${CIRCLE_WORKFLOW_ID}-${CIRCLE_NODE_INDEX}" \
+              --name "CircleCI #${CIRCLE_BUILD_NUM} node $((CIRCLE_NODE_INDEX + 1))/${CIRCLE_NODE_TOTAL}"
+
+workflows:
+  training:
+    when: << pipeline.parameters.run_training >>
+    jobs:
+      - ai-training
