@@ -24,9 +24,9 @@ on:
         default: "4"
         type: string
       shards_json:
-        description: 'Parallel runner IDs as JSON. Start with [1]; for a bounded test use [1,2] or [1,2,3,4].'
+        description: 'Parallel runner IDs as JSON. Default launches 8 runners; up to 20 can run concurrently.'
         required: true
-        default: "[1]"
+        default: "[1,2,3,4,5,6,7,8]"
         type: string
 
 permissions:
@@ -39,7 +39,7 @@ jobs:
     timeout-minutes: 180
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 20
       matrix:
         shard: ${{ fromJSON(inputs.shards_json) }}
     steps:
