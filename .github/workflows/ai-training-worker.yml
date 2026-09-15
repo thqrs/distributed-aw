@@ -11,7 +11,7 @@ on:
       campaign:
         description: "Campaign ID"
         required: true
-        default: "breadth-100k-det"
+        default: "breadth-100k"
         type: string
       seeds_per_job:
         description: "Seeds per runner; 0 = continuous until campaign is done or soft timeout"
