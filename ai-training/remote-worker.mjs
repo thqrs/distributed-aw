@@ -26,21 +26,31 @@ if(!isMainThread){
   const base=String(args.url||process.env.AI_TRAINING_URL||'').replace(/\/$/,'');
   const key=String(args.key||process.env.AI_TRAINING_KEY||'');
   const campaignId=String(args.campaign||process.env.AI_TRAINING_CAMPAIGN||'');
-  if(!base||!key||!campaignId){console.error('Usage: AI_TRAINING_URL=https://site/ai-training AI_TRAINING_KEY=... node remote-worker.mjs --campaign ID --workers 4 --limit 500');process.exit(2);}
+  if(!base||!key||!campaignId){console.error('Usage: AI_TRAINING_URL=https://site/ai-training AI_TRAINING_KEY=... node remote-worker.mjs --campaign ID --workers 4 --limit 0');process.exit(2);}
+
   const avail=os.availableParallelism?.()||os.cpus().length;
   const workers=Math.max(1,Math.min(64,args.workers==='auto'||!args.workers?Math.max(1,Math.min(8,avail-1)):Number(args.workers)||1));
-  const limit=Math.max(1,Number(args.limit||100));
+  const rawLimit=Number(args.limit??100);
+  const continuous=Number.isFinite(rawLimit)&&rawLimit===0;
+  const limit=continuous?Infinity:Math.max(1,Number.isFinite(rawLimit)?rawLimit:100);
+  const targetLabel=continuous?'∞':String(limit);
+  const maxMinutes=Math.max(1,Number(args['max-minutes']||330));
+  const claimMinutes=Math.max(1,Math.min(30,Number(args['claim-minutes']||12)));
+  const submitBatch=Math.max(1,Math.min(128,Number(args['submit-batch']||16)));
   const claimArg=String(args.claim??'auto').toLowerCase();
   const manualClaim=claimArg!=='auto'&&Number(claimArg)>0?Math.max(1,Math.min(500,Number(claimArg))):0;
   const deviceId=String(args['device-id']||`node-${os.hostname()}-${crypto.randomUUID().slice(0,8)}`);
   const deviceName=String(args.name||`Node ${os.hostname()}`);
+  const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+
   const api=async(action,{method='GET',body=null}={})=>{
     const r=await fetch(`${base}/api.php?action=${encodeURIComponent(action)}`,{method,headers:{'Accept':'application/json','Content-Type':'application/json','X-AI-Training-Key':key},body:body?JSON.stringify(body):undefined});
     let j;try{j=await r.json();}catch(_){throw new Error(`HTTP ${r.status} (non-JSON)`);}
     if(!r.ok||j.ok===false)throw new Error(j.error||`HTTP ${r.status}`);return j;
   };
   const text=async p=>{const r=await fetch(`${base}/${p}`,{cache:'no-store'});if(!r.ok)throw new Error(`GET ${p}: ${r.status}`);return await r.text();};
-  console.log(`[INIT] ${base} campaign=${campaignId} workers=${workers}/${avail} target=${limit} claim=${manualClaim||'auto'}`);
+
+  console.log(`[INIT] ${base} campaign=${campaignId} workers=${workers}/${avail} target=${targetLabel} claim=${manualClaim||'auto'} claimWindow=${claimMinutes}m submitBatch=${submitBatch} softStop=${maxMinutes}m`);
   const [engine,shared,suites]=await Promise.all([text('assets/tactical-lab-worker-bundle.js'),text('shared-sim.js'),text('assets/suites.json')]);
 
   const pool=[],idle=[],pending=new Map(),queue=[];let seq=1;
@@ -54,20 +64,52 @@ if(!isMainThread){
   for(let i=0;i<workers;i++)spawn(i);
 
   let completed=0,start=Date.now(),localFinished=0;
+  const softStopAt=start+maxMinutes*60_000;
   const rateSps=()=>{const sec=(Date.now()-start)/1000;return sec>10&&completed>0?completed/sec:0;};
-  const desiredClaim=remaining=>{if(manualClaim)return Math.min(manualClaim,remaining);const sps=rateSps();const n=sps>0?Math.round(sps*8*60):workers*4;return Math.max(1,Math.min(200,remaining,Math.max(workers*2,n)));};
+  const remaining=()=>continuous?500:Math.max(0,limit-completed);
+  const desiredClaim=()=>{
+    const rem=remaining();
+    if(rem<=0)return 0;
+    if(manualClaim)return Math.min(manualClaim,rem);
+    const sps=rateSps();
+    const n=sps>0?Math.round(sps*claimMinutes*60):workers*16;
+    return Math.max(1,Math.min(500,rem,Math.max(workers*4,n)));
+  };
+  const doneLabel=()=>`${completed}/${targetLabel}`;
+
   try{
-    while(completed<limit){
-      const want=desiredClaim(limit-completed);
+    while(continuous||completed<limit){
+      if(Date.now()>=softStopAt){console.log(`[SOFT STOP] reached ${maxMinutes} min; not claiming more work`);break;}
+      const want=desiredClaim();
+      if(want<=0)break;
       const claim=await api('claim',{method:'POST',body:{campaign_id:campaignId,count:want,device_id:deviceId,device_name:deviceName,user_agent:`Node ${process.version}`,platform:`${process.platform}/${process.arch}`,worker_count:workers,benchmark_sps:rateSps()||null,lease_seconds:900}});
-      if(!claim.seeds.length){console.log('[DONE] no seeds available');break;}
+      if(!claim.seeds.length){
+        const done=Number(claim.stats?.done||0),total=Number(claim.stats?.total||0);
+        if(total>0&&done>=total){console.log(`[DONE] campaign complete ${done}/${total}`);break;}
+        if(!continuous){console.log('[DONE] no seeds available');break;}
+        console.log(`[IDLE] no claimable seeds right now${total?` global=${done}/${total}`:''}; retrying in 15s`);
+        await sleep(15000);
+        continue;
+      }
       const token=claim.lease_token;
-      console.log(`[LEASE] ${claim.seeds.length} jobs ${claim.seeds[0]}…${claim.seeds.at(-1)} global=${claim.stats.done}/${claim.stats.total}`);
-      const hb=setInterval(()=>api('heartbeat',{method:'POST',body:{lease_token:token,device_id:deviceId,lease_seconds:900,worker_count:workers,benchmark_sps:rateSps()||null}}).then(x=>console.log(`[HEARTBEAT] lease ${x.extended} jobs | submitted=${completed}/${limit} | rate=${(rateSps()*60).toFixed(2)} seeds/min`)).catch(e=>console.error('[HEARTBEAT ERROR]',e.message)),60000);
+      console.log(`[LEASE] ${claim.seeds.length} jobs ${claim.seeds[0]}…${claim.seeds.at(-1)} global=${claim.stats?.done??'?'} / ${claim.stats?.total??'?'}`);
+      const hb=setInterval(()=>api('heartbeat',{method:'POST',body:{lease_token:token,device_id:deviceId,lease_seconds:900,worker_count:workers,benchmark_sps:rateSps()||null}}).then(x=>console.log(`[HEARTBEAT] lease ${x.extended} jobs | submitted=${doneLabel()} | rate=${(rateSps()*60).toFixed(2)} seeds/min`)).catch(e=>console.error('[HEARTBEAT ERROR]',e.message)),60000);
       const buffer=[];let flushChain=Promise.resolve();
-      const flush=(force=false)=>{flushChain=flushChain.then(async()=>{const threshold=Math.min(32,Math.max(8,workers*2));if(!buffer.length||(!force&&buffer.length<threshold))return;const batch=buffer.splice(0,buffer.length);const sub=await api('submit',{method:'POST',body:{campaign_id:campaignId,lease_token:token,device_id:deviceId,results:batch,include_stats:false}});completed+=sub.accepted+sub.duplicates;const sec=(Date.now()-start)/1000,rate=sec?completed/sec*60:0;console.log(`[BATCH] +${sub.accepted}${sub.duplicates?` dup=${sub.duplicates}`:''} done=${completed}/${limit} rate=${rate.toFixed(2)} seeds/min global=${sub.stats.done}/${sub.stats.total}`);});return flushChain;};
+      const flush=(force=false)=>{flushChain=flushChain.then(async()=>{
+        if(!buffer.length||(!force&&buffer.length<submitBatch))return;
+        const batch=buffer.splice(0,buffer.length);
+        const sub=await api('submit',{method:'POST',body:{campaign_id:campaignId,lease_token:token,device_id:deviceId,results:batch,include_stats:false}});
+        completed+=Number(sub.accepted||0)+Number(sub.duplicates||0);
+        const sec=(Date.now()-start)/1000,rate=sec?completed/sec*60:0;
+        const globalText=sub.stats?` global=${sub.stats.done}/${sub.stats.total}`:'';
+        console.log(`[BATCH] +${sub.accepted||0}${sub.duplicates?` dup=${sub.duplicates}`:''} done=${doneLabel()} rate=${rate.toFixed(2)} seeds/min${globalText}`);
+      });return flushChain;};
       try{
-        await Promise.all(claim.seeds.map(seed=>run(seed,claim.campaign).then(async result=>{localFinished++;buffer.push(result);console.log(`[PROGRESS] calculated=${localFinished} submitted=${completed}/${limit} buffered=${buffer.length}`);if(buffer.length>=Math.min(32,Math.max(8,workers*2)))await flush(false);})));
+        await Promise.all(claim.seeds.map(seed=>run(seed,claim.campaign).then(async result=>{
+          localFinished++;buffer.push(result);
+          console.log(`[PROGRESS] calculated=${localFinished} submitted=${doneLabel()} buffered=${buffer.length}`);
+          if(buffer.length>=submitBatch)await flush(false);
+        })));
         await flush(true);
       }finally{clearInterval(hb);await flushChain;}
     }
