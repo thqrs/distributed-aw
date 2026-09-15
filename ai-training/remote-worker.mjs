@@ -5,10 +5,12 @@ import crypto from 'node:crypto';
 
 if(!isMainThread){
   (0,eval)(workerData.engine);(0,eval)(workerData.shared);
-  const suites=JSON.parse(workerData.suites).suites;
+  const suitePack=JSON.parse(workerData.suites);
+  const suites=suitePack.suites,engineBuild=suitePack.engineBuild;
   parentPort.on('message',m=>{
     if(!m||m.type!=='run')return;
     try{
+      if(m.campaign.engine_build&&m.campaign.engine_build!==engineBuild)throw new Error(`Engine mismatch campaign=${m.campaign.engine_build} client=${engineBuild}`);
       const suite=suites[m.campaign.suite];
       if(!suite)throw new Error('Unknown suite '+m.campaign.suite);
       const result=globalThis.AITrainingSim.runSeed({campaign:m.campaign,seed:m.seed,suite});
@@ -63,9 +65,9 @@ if(!isMainThread){
       console.log(`[LEASE] ${claim.seeds.length} jobs ${claim.seeds[0]}…${claim.seeds.at(-1)} global=${claim.stats.done}/${claim.stats.total}`);
       const hb=setInterval(()=>api('heartbeat',{method:'POST',body:{lease_token:token,device_id:deviceId,lease_seconds:900,worker_count:workers,benchmark_sps:rateSps()||null}}).then(x=>console.log(`[HEARTBEAT] lease ${x.extended} jobs | submitted=${completed}/${limit} | rate=${(rateSps()*60).toFixed(2)} seeds/min`)).catch(e=>console.error('[HEARTBEAT ERROR]',e.message)),60000);
       const buffer=[];let flushChain=Promise.resolve();
-      const flush=(force=false)=>{flushChain=flushChain.then(async()=>{const threshold=Math.max(2,workers);if(!buffer.length||(!force&&buffer.length<threshold))return;const batch=buffer.splice(0,buffer.length);const sub=await api('submit',{method:'POST',body:{campaign_id:campaignId,lease_token:token,device_id:deviceId,results:batch}});completed+=sub.accepted+sub.duplicates;const sec=(Date.now()-start)/1000,rate=sec?completed/sec*60:0;console.log(`[BATCH] +${sub.accepted}${sub.duplicates?` dup=${sub.duplicates}`:''} done=${completed}/${limit} rate=${rate.toFixed(2)} seeds/min global=${sub.stats.done}/${sub.stats.total}`);});return flushChain;};
+      const flush=(force=false)=>{flushChain=flushChain.then(async()=>{const threshold=Math.min(32,Math.max(8,workers*2));if(!buffer.length||(!force&&buffer.length<threshold))return;const batch=buffer.splice(0,buffer.length);const sub=await api('submit',{method:'POST',body:{campaign_id:campaignId,lease_token:token,device_id:deviceId,results:batch,include_stats:false}});completed+=sub.accepted+sub.duplicates;const sec=(Date.now()-start)/1000,rate=sec?completed/sec*60:0;console.log(`[BATCH] +${sub.accepted}${sub.duplicates?` dup=${sub.duplicates}`:''} done=${completed}/${limit} rate=${rate.toFixed(2)} seeds/min global=${sub.stats.done}/${sub.stats.total}`);});return flushChain;};
       try{
-        await Promise.all(claim.seeds.map(seed=>run(seed,claim.campaign).then(async result=>{localFinished++;buffer.push(result);console.log(`[PROGRESS] calculated=${localFinished} submitted=${completed}/${limit} buffered=${buffer.length}`);if(buffer.length>=Math.max(2,workers))await flush(false);})));
+        await Promise.all(claim.seeds.map(seed=>run(seed,claim.campaign).then(async result=>{localFinished++;buffer.push(result);console.log(`[PROGRESS] calculated=${localFinished} submitted=${completed}/${limit} buffered=${buffer.length}`);if(buffer.length>=Math.min(32,Math.max(8,workers*2)))await flush(false);})));
         await flush(true);
       }finally{clearInterval(hb);await flushChain;}
     }
