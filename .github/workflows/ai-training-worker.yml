@@ -14,9 +14,9 @@ on:
         default: "breadth-100k"
         type: string
       seeds_per_job:
-        description: "Seeds to submit per runner"
+        description: "Seeds per runner; 0 = continuous until campaign is done or soft timeout"
         required: true
-        default: "50"
+        default: "0"
         type: string
       workers:
         description: "Node worker threads per runner"
@@ -24,9 +24,9 @@ on:
         default: "4"
         type: string
       shards_json:
-        description: 'Parallel runner IDs as JSON. Default launches 8 runners; up to 20 can run concurrently.'
+        description: 'Parallel runner IDs as JSON. Default launches all 20 standard runner slots.'
         required: true
-        default: "[1,2,3,4,5,6,7,8]"
+        default: "[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]"
         type: string
 
 permissions:
@@ -36,7 +36,7 @@ jobs:
   train:
     name: shard ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    timeout-minutes: 350
     strategy:
       fail-fast: false
       max-parallel: 20
@@ -64,7 +64,7 @@ jobs:
             exit 1
           fi
 
-      - name: Run bounded AI-training batch
+      - name: Run continuous AI-training worker
         env:
           AI_TRAINING_URL: ${{ inputs.site }}
           AI_TRAINING_KEY: ${{ secrets.AI_TRAINING_KEY }}
@@ -79,5 +79,8 @@ jobs:
             --workers "${{ inputs.workers }}" \
             --limit "${{ inputs.seeds_per_job }}" \
             --claim auto \
+            --claim-minutes 12 \
+            --submit-batch 16 \
+            --max-minutes 330 \
             --device-id "gha-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.shard }}" \
             --name "GitHub Actions #${{ github.run_number }} shard ${{ matrix.shard }}"
