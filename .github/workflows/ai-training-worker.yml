@@ -57,7 +57,7 @@ jobs:
       matrix:
         shard: ${{ fromJSON(inputs.shards_json) }}
     steps:
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: '22'
       - name: Descarregar o worker do site
