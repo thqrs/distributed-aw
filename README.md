@@ -1,19 +1,50 @@
 # distributed-aw
 
-Minimal distributed AI-training worker for the AWBW project.
+Workers do treino distribuído da CPU do [awbw4](https://awbw.vitamindanswers.com) para o
+GitHub Actions, o CircleCI e o Kaggle.
 
-This repository intentionally contains only the GitHub Actions runner and the remote Node.js worker. The game/server source, SQLite database, private configuration, training results and admin credentials remain outside GitHub.
+Este repositório só tem os workflows. O código do jogo, as campanhas, os resultados e as
+chaves ficam fora do GitHub. Cada máquina descarrega do site o worker empacotado
+(`treino/remote-worker.mjs`, Node 18+: traz o motor, a CPU, os mapas e o engine build do
+site), pede trabalhos ao servidor, joga-os em todos os núcleos e envia os resultados.
 
-## Setup
+Cada trabalho é um par de partidas a sério (o mesmo mapa dos dois lados, até ao dia 30):
+um passo do SPSA (duas versões da CPU com pesos um bocadinho diferentes; os pesos andam
+para o lado de quem ganhou) ou um par de uma validação (a CPU que está a aprender contra
+a CPU do jogo, em mapas que o treino não usa, até o SPRT decidir se é melhor). O progresso
+vê-se no jogo, em "Ajudar a treinar a CPU".
 
-1. Add a repository Actions secret named `AI_TRAINING_KEY` containing the AI Training **worker key** (not the admin key).
-2. Open **Actions → AI training worker (manual) → Run workflow**.
-3. For the first test use:
-   - `site`: `https://awbw.vitamindanswers.com/ai-training`
-   - `campaign`: `breadth-100k`
-   - `seeds_per_job`: `20`
-   - `workers`: `4`
-   - `shards_json`: `[1]`
-4. If the single-runner test is healthy, bounded parallel tests can use `[1,2]` and then `[1,2,3,4]`.
+## GitHub Actions
 
-At runtime the worker downloads the simulation bundle, shared simulation code and suite definitions from the configured AI Training endpoint, claims seeds, computes them locally on the runner, and submits results back in small batches.
+1. O secret `AI_TRAINING_KEY` (Settings → Secrets and variables → Actions) tem a **chave dos
+   workers** do awbw4. Nunca a de administração.
+2. Actions → **Treino da CPU (awbw4)** → Run workflow. Por omissão: 20 máquinas × 4 núcleos,
+   cada uma até 330 minutos (o GitHub corta às 6 h; no fim, cada máquina acaba as partidas a
+   meio, envia-as e devolve o resto). Para experimentar: `shards_json` = `[1]`,
+   `jobs_per_runner` = `4`.
+
+## Kaggle
+
+Notebook com **Internet** ligada (Settings → Internet on). Numa célula:
+
+```
+!curl -fsSL https://awbw.vitamindanswers.com/treino/remote-worker.mjs -o awbw-worker.mjs
+!node awbw-worker.mjs --url https://awbw.vitamindanswers.com --chave CHAVE_DOS_WORKERS --workers 4 --nome Kaggle
+```
+
+O botão de parar (interromper) acaba as partidas a meio e devolve o resto.
+
+## CircleCI
+
+Variável do projeto `AI_TRAINING_KEY` com a chave dos workers; Trigger Pipeline com
+`run_training` = `true` (e `parallelism`, `workers`, `minutes` à escolha).
+
+## Outros PCs
+
+Qualquer PC com Node 18+: os mesmos dois comandos do Kaggle (sem o `!`). Ctrl+C acaba as
+partidas a meio e devolve o resto.
+
+---
+
+`ai-training/remote-worker.mjs` é o worker antigo do awbw3 (treino parado desde 15/09/2026);
+já não é usado.

@@ -1,3 +1,7 @@
+# Workers do treino distribuído da CPU do awbw4, no CircleCI (o mesmo que o workflow do
+# GitHub Actions): descarrega do site o worker empacotado e joga pares de partidas.
+# Variável do projeto no CircleCI: AI_TRAINING_KEY = a CHAVE DOS WORKERS do awbw4.
+# Correr: Trigger Pipeline com o parâmetro run_training = true.
 version: 2.1
 
 parameters:
@@ -6,19 +10,22 @@ parameters:
     default: false
   campaign:
     type: string
-    default: "breadth-100k"
+    default: ""
   parallelism:
     type: integer
     default: 1
   workers:
     type: integer
     default: 2
-  seeds_per_job:
+  jobs_per_runner:
     type: integer
     default: 0
+  minutes:
+    type: integer
+    default: 55
   site:
     type: string
-    default: "https://awbw.vitamindanswers.com/ai-training"
+    default: "https://awbw.vitamindanswers.com"
 
 jobs:
   ai-training:
@@ -27,27 +34,26 @@ jobs:
     resource_class: medium
     parallelism: << pipeline.parameters.parallelism >>
     steps:
-      - checkout
       - run:
-          name: Run distributed AW training worker
+          name: Jogar pares de partidas (awbw4)
           no_output_timeout: 10m
           command: |
             if [ -z "${AI_TRAINING_KEY:-}" ]; then
-              echo "CircleCI project environment variable AI_TRAINING_KEY is missing." >&2
+              echo "Falta a variável AI_TRAINING_KEY (a chave dos workers do awbw4) no projeto do CircleCI." >&2
               exit 2
             fi
-
-            node ai-training/remote-worker.mjs \
-              --url "<< pipeline.parameters.site >>" \
-              --campaign "<< pipeline.parameters.campaign >>" \
-              --workers "<< pipeline.parameters.workers >>" \
-              --limit "<< pipeline.parameters.seeds_per_job >>" \
-              --claim auto \
-              --claim-minutes 10 \
-              --submit-batch 16 \
-              --max-minutes 55 \
-              --device-id "circleci-${CIRCLE_WORKFLOW_ID}-${CIRCLE_NODE_INDEX}" \
-              --name "CircleCI #${CIRCLE_BUILD_NUM} node $((CIRCLE_NODE_INDEX + 1))/${CIRCLE_NODE_TOTAL}"
+            curl -fsSL "<< pipeline.parameters.site >>/treino/remote-worker.mjs" -o awbw-worker.mjs
+            LIMIT=()
+            if [ "<< pipeline.parameters.jobs_per_runner >>" != "0" ]; then LIMIT=(--limite "<< pipeline.parameters.jobs_per_runner >>"); fi
+            CAMPAIGN=()
+            if [ -n "<< pipeline.parameters.campaign >>" ]; then CAMPAIGN=(--campanha "<< pipeline.parameters.campaign >>"); fi
+            # no fim do tempo, SIGINT: acaba as partidas a meio, envia-as e devolve o resto
+            timeout --preserve-status -s INT -k 5m "<< pipeline.parameters.minutes >>m" \
+              node awbw-worker.mjs \
+                --url "<< pipeline.parameters.site >>" \
+                --workers "<< pipeline.parameters.workers >>" "${LIMIT[@]}" "${CAMPAIGN[@]}" \
+                --dispositivo "circleci-${CIRCLE_WORKFLOW_ID}-${CIRCLE_NODE_INDEX}" \
+                --nome "CircleCI #${CIRCLE_BUILD_NUM} máquina $((CIRCLE_NODE_INDEX + 1))/${CIRCLE_NODE_TOTAL}"
 
 workflows:
   training:

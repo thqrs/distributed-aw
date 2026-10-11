@@ -1,30 +1,44 @@
-name: AI training worker (manual)
+# Workers do treino distribuído da CPU do awbw4 (https://awbw.vitamindanswers.com).
+# Não precisa do código do jogo: cada máquina descarrega do site o worker empacotado
+# (treino/remote-worker.mjs: o motor, a CPU, os mapas e o engine build do site), pede
+# trabalhos (pares de partidas até ao dia 30: passos do SPSA e validações), joga-os em
+# todos os núcleos e envia os resultados. Se uma máquina for cancelada, o lease expira e
+# o servidor dá esse trabalho a outras.
+#
+# Secret AI_TRAINING_KEY = a CHAVE DOS WORKERS do awbw4 (nunca a de administração).
+# Actions → "Treino da CPU (awbw4)" → Run workflow.
+name: Treino da CPU (awbw4)
 
 on:
   workflow_dispatch:
     inputs:
       site:
-        description: "AI Training base URL"
+        description: "Endereço do site"
         required: true
-        default: "https://awbw.vitamindanswers.com/ai-training"
+        default: "https://awbw.vitamindanswers.com"
         type: string
       campaign:
-        description: "Campaign ID"
-        required: true
-        default: "breadth-100k"
+        description: "Campanha (vazio = a primeira ativa com o mesmo engine build)"
+        required: false
+        default: ""
         type: string
-      seeds_per_job:
-        description: "Seeds per runner; 0 = continuous until campaign is done or soft timeout"
+      jobs_per_runner:
+        description: "Pares de partidas por máquina; 0 = sem limite (até a campanha acabar ou o tempo acabar)"
         required: true
         default: "0"
         type: string
+      minutes:
+        description: "Minutos por máquina (o GitHub corta às 6 h; no fim acaba as partidas a meio e devolve o resto)"
+        required: true
+        default: "330"
+        type: string
       workers:
-        description: "Node worker threads per runner"
+        description: "Núcleos por máquina"
         required: true
         default: "4"
         type: string
       shards_json:
-        description: 'Parallel runner IDs as JSON. Default launches all 20 standard runner slots.'
+        description: "Máquinas em paralelo, em JSON (ex.: [1] para experimentar)"
         required: true
         default: "[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]"
         type: string
@@ -34,53 +48,33 @@ permissions:
 
 jobs:
   train:
-    name: shard ${{ matrix.shard }}
+    name: máquina ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 355
     strategy:
       fail-fast: false
       max-parallel: 20
       matrix:
         shard: ${{ fromJSON(inputs.shards_json) }}
     steps:
-      - name: Checkout project
-        uses: actions/checkout@v4
-
-      - name: Node 20
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '20'
-
-      - name: Locate remote worker
-        id: locate
-        shell: bash
-        run: |
-          if [ -f "ai-training/remote-worker.mjs" ]; then
-            echo "worker=ai-training/remote-worker.mjs" >> "$GITHUB_OUTPUT"
-          elif [ -f "awbw3/ai-training/remote-worker.mjs" ]; then
-            echo "worker=awbw3/ai-training/remote-worker.mjs" >> "$GITHUB_OUTPUT"
-          else
-            echo "remote-worker.mjs not found" >&2
-            exit 1
-          fi
-
-      - name: Run continuous AI-training worker
+          node-version: '22'
+      - name: Descarregar o worker do site
+        run: curl -fsSL "${{ inputs.site }}/treino/remote-worker.mjs" -o awbw-worker.mjs
+      - name: Jogar pares de partidas
         env:
           AI_TRAINING_URL: ${{ inputs.site }}
           AI_TRAINING_KEY: ${{ secrets.AI_TRAINING_KEY }}
+          AI_TRAINING_CAMPAIGN: ${{ inputs.campaign }}
         shell: bash
         run: |
-          if [ -z "$AI_TRAINING_KEY" ]; then
-            echo "Repository secret AI_TRAINING_KEY is missing." >&2
-            exit 2
-          fi
-          node "${{ steps.locate.outputs.worker }}" \
-            --campaign "${{ inputs.campaign }}" \
-            --workers "${{ inputs.workers }}" \
-            --limit "${{ inputs.seeds_per_job }}" \
-            --claim auto \
-            --claim-minutes 12 \
-            --submit-batch 16 \
-            --max-minutes 330 \
-            --device-id "gha-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.shard }}" \
-            --name "GitHub Actions #${{ github.run_number }} shard ${{ matrix.shard }}"
+          if [ -z "$AI_TRAINING_KEY" ]; then echo "Falta o secret AI_TRAINING_KEY (a chave dos workers do awbw4)." >&2; exit 2; fi
+          LIMIT=()
+          if [ "${{ inputs.jobs_per_runner }}" != "0" ]; then LIMIT=(--limite "${{ inputs.jobs_per_runner }}"); fi
+          # no fim do tempo, Ctrl+C (SIGINT): o worker acaba as partidas a meio, envia-as e devolve o resto
+          timeout --preserve-status -s INT -k 5m "${{ inputs.minutes }}m" \
+            node awbw-worker.mjs \
+              --workers "${{ inputs.workers }}" "${LIMIT[@]}" \
+              --dispositivo "gha-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.shard }}" \
+              --nome "GitHub Actions #${{ github.run_number }} máquina ${{ matrix.shard }}"
