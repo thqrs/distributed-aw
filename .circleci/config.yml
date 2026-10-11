@@ -47,9 +47,10 @@ jobs:
             if [ "<< pipeline.parameters.jobs_per_runner >>" != "0" ]; then LIMIT=(--limite "<< pipeline.parameters.jobs_per_runner >>"); fi
             CAMPAIGN=()
             if [ -n "<< pipeline.parameters.campaign >>" ]; then CAMPAIGN=(--campanha "<< pipeline.parameters.campaign >>"); fi
-            # no fim do tempo, SIGINT: acaba as partidas a meio, envia-as e devolve o resto
-            timeout --preserve-status -s INT -k 5m "<< pipeline.parameters.minutes >>m" \
+            # --minutos: no fim do tempo acaba as partidas a meio, envia-as e devolve o resto (o timeout é só rede de segurança)
+            timeout --foreground -s INT -k 2m "$(( << pipeline.parameters.minutes >> + 10 ))m" \
               node awbw-worker.mjs \
+                --minutos "<< pipeline.parameters.minutes >>" \
                 --url "<< pipeline.parameters.site >>" \
                 --workers "<< pipeline.parameters.workers >>" "${LIMIT[@]}" "${CAMPAIGN[@]}" \
                 --dispositivo "circleci-${CIRCLE_WORKFLOW_ID}-${CIRCLE_NODE_INDEX}" \
