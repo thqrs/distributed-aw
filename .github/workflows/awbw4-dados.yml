@@ -20,6 +20,11 @@ on:
         default: "posicoes"
         type: choice
         options: [posicoes, decisoes]
+      dados_de:
+        description: "Só treinar, com os dados de outra execução deste workflow (o número da execução); vazio = jogar"
+        required: false
+        default: ""
+        type: string
       minutes:
         description: "Minutos a jogar por máquina"
         required: true
@@ -38,10 +43,12 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   jogar:
     name: dados ${{ matrix.shard }}
+    if: inputs.dados_de == ''
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
@@ -78,6 +85,8 @@ jobs:
         with:
           pattern: dados-*
           path: dados
+          run-id: ${{ inputs.dados_de || github.run_id }}
+          github-token: ${{ github.token }}
       - name: Treinar o modelo
         run: |
           if [ "${{ inputs.mode }}" = "decisoes" ]; then
