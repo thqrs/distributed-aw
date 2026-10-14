@@ -1,0 +1,81 @@
+# Dados e treino da avaliação aprendida da CPU do awbw4 (src/ai/value.ts no awbw4).
+# Não usa o servidor nem segredos: cada máquina descarrega do site o treino/dados.mjs, joga
+# partidas CPU contra CPU até ao dia 60 e guarda as posições (início de cada turno → quem
+# ganhou) num artefacto. No fim, uma máquina junta tudo e treina o modelo (artefacto
+# "modelo": ai-value.json, que vai para content/ai-value.json do awbw4).
+# Actions → "Dados da avaliação (awbw4)" → Run workflow.
+name: Dados da avaliação (awbw4)
+
+on:
+  workflow_dispatch:
+    inputs:
+      site:
+        description: "Endereço do site"
+        required: true
+        default: "https://awbw.vitamindanswers.com"
+        type: string
+      minutes:
+        description: "Minutos a jogar por máquina"
+        required: true
+        default: "30"
+        type: string
+      workers:
+        description: "Núcleos por máquina"
+        required: true
+        default: "4"
+        type: string
+      shards_json:
+        description: "Máquinas em paralelo, em JSON"
+        required: true
+        default: "[1,2,3,4,5,6,7,8,9,10]"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  jogar:
+    name: dados ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        shard: ${{ fromJSON(inputs.shards_json) }}
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Descarregar o dados.mjs do site
+        run: curl -fsSL "${{ inputs.site }}/treino/dados.mjs" -o dados.mjs
+      - name: Jogar partidas
+        run: node dados.mjs --jogar --minutos "${{ inputs.minutes }}" --workers "${{ inputs.workers }}" --semente "$(( ${{ github.run_number }} * 100 + ${{ matrix.shard }} ))" --saida "dados-${{ matrix.shard }}.csv.gz"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dados-${{ matrix.shard }}
+          path: dados-${{ matrix.shard }}.csv.gz
+          retention-days: 30
+
+  treinar:
+    needs: jogar
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - name: Descarregar o dados.mjs do site
+        run: curl -fsSL "${{ inputs.site }}/treino/dados.mjs" -o dados.mjs
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dados-*
+          path: dados
+      - name: Treinar o modelo
+        run: node --max-old-space-size=6000 dados.mjs --treinar dados --saida ai-value.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: modelo
+          path: ai-value.json
+          retention-days: 90
