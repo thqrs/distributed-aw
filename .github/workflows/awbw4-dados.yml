@@ -14,6 +14,12 @@ on:
         required: true
         default: "https://awbw.vitamindanswers.com"
         type: string
+      mode:
+        description: "posicoes (avaliação aprendida) ou decisoes (MPC rápido: as escolhas do MPC)"
+        required: true
+        default: "posicoes"
+        type: choice
+        options: [posicoes, decisoes]
       minutes:
         description: "Minutos a jogar por máquina"
         required: true
@@ -50,7 +56,7 @@ jobs:
       - name: Descarregar o dados.mjs do site
         run: curl -fsSL "${{ inputs.site }}/treino/dados.mjs" -o dados.mjs
       - name: Jogar partidas
-        run: node dados.mjs --jogar --minutos "${{ inputs.minutes }}" --workers "${{ inputs.workers }}" --semente "$(( ${{ github.run_number }} * 100 + ${{ matrix.shard }} ))" --saida "dados-${{ matrix.shard }}.csv.gz"
+        run: node dados.mjs --jogar --modo "${{ inputs.mode }}" --minutos "${{ inputs.minutes }}" --workers "${{ inputs.workers }}" --semente "$(( ${{ github.run_number }} * 100 + ${{ matrix.shard }} ))" --saida "dados-${{ matrix.shard }}.csv.gz"
       - uses: actions/upload-artifact@v4
         with:
           name: dados-${{ matrix.shard }}
@@ -73,9 +79,14 @@ jobs:
           pattern: dados-*
           path: dados
       - name: Treinar o modelo
-        run: node --max-old-space-size=6000 dados.mjs --treinar dados --saida ai-value.json
+        run: |
+          if [ "${{ inputs.mode }}" = "decisoes" ]; then
+            node --max-old-space-size=6000 dados.mjs --treinar-escolhas dados --saida ai-mpc-rapido.json
+          else
+            node --max-old-space-size=6000 dados.mjs --treinar dados --saida ai-value.json
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: modelo
-          path: ai-value.json
+          path: ai-*.json
           retention-days: 90
