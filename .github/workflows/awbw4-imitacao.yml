@@ -1,0 +1,105 @@
+# Imitação dos jogadores de elite do AWBW pela CPU do awbw4 (src/ai/train/imitate.ts no awbw4).
+# Não usa o servidor nem segredos. Os replays vêm do arquivo público tiansrealm/awbw-replays
+# (replays/*.py deste repositório passam-nos a JSON: só os jogos da Global League Standard).
+# Cada máquina afina os 46 pesos por SPSA para a CPU dar mais probabilidade às jogadas
+# humanas; no fim, uma máquina faz a média e mede-a em jogos que o treino não viu
+# (artefacto "imitacao": imitacao.json, com os pesos).
+# Actions → "Imitação (awbw4)" → Run workflow.
+name: Imitação (awbw4)
+
+on:
+  workflow_dispatch:
+    inputs:
+      site:
+        description: "Endereço do site"
+        required: true
+        default: "https://awbw.vitamindanswers.com"
+        type: string
+      minutes:
+        description: "Minutos de afinação por máquina"
+        required: true
+        default: "40"
+        type: string
+      workers:
+        description: "Núcleos por máquina"
+        required: true
+        default: "4"
+        type: string
+      shards_json:
+        description: "Máquinas em paralelo, em JSON"
+        required: true
+        default: "[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18]"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  preparar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: Replays da Global League (tiansrealm/awbw-replays)
+        run: |
+          git clone -q --depth 1 https://github.com/tiansrealm/awbw-replays.git arquivo
+          python3 -I replays/catalogo.py arquivo catalogo.csv
+          python3 -I replays/exportar_replays.py catalogo.csv arquivo liga.jsonl.gz STD 1234
+      - uses: actions/upload-artifact@v4
+        with:
+          name: replays
+          path: liga.jsonl.gz
+          retention-days: 7
+
+  afinar:
+    needs: preparar
+    name: imitação ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        shard: ${{ fromJSON(inputs.shards_json) }}
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          name: replays
+      - name: Descarregar o imitar.mjs do site
+        run: curl -fsSL "${{ inputs.site }}/treino/imitar.mjs" -o imitar.mjs
+      - name: Afinar
+        run: node --max-old-space-size=6000 imitar.mjs --afinar --replays liga.jsonl.gz --minutos "${{ inputs.minutes }}" --workers "${{ inputs.workers }}" --semente "${{ matrix.shard }}" --saida "imit-${{ matrix.shard }}.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: imit-${{ matrix.shard }}
+          path: imit-${{ matrix.shard }}.json
+          retention-days: 30
+
+  juntar:
+    needs: afinar
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - uses: actions/download-artifact@v4
+        with:
+          name: replays
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: imit-*
+          path: maquinas
+      - name: Descarregar o imitar.mjs do site
+        run: curl -fsSL "${{ inputs.site }}/treino/imitar.mjs" -o imitar.mjs
+      - name: Média e teste
+        run: node --max-old-space-size=6000 imitar.mjs --juntar maquinas --replays liga.jsonl.gz --workers 4 --saida imitacao.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: imitacao
+          path: imitacao.json
+          retention-days: 90
