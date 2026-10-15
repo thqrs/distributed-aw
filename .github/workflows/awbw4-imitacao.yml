@@ -71,7 +71,7 @@ jobs:
       - name: Descarregar o imitar.mjs do site
         run: curl -fsSL "${{ inputs.site }}/treino/imitar.mjs" -o imitar.mjs
       - name: Afinar
-        run: node --max-old-space-size=6000 imitar.mjs --afinar --replays liga.jsonl.gz --minutos "${{ inputs.minutes }}" --workers "${{ inputs.workers }}" --semente "${{ matrix.shard }}" --saida "imit-${{ matrix.shard }}.json"
+        run: node imitar.mjs --afinar --replays liga.jsonl.gz --minutos "${{ inputs.minutes }}" --workers "${{ inputs.workers }}" --semente "${{ matrix.shard }}" --saida "imit-${{ matrix.shard }}.json"
       - uses: actions/upload-artifact@v4
         with:
           name: imit-${{ matrix.shard }}
@@ -97,7 +97,7 @@ jobs:
       - name: Descarregar o imitar.mjs do site
         run: curl -fsSL "${{ inputs.site }}/treino/imitar.mjs" -o imitar.mjs
       - name: Média e teste
-        run: node --max-old-space-size=6000 imitar.mjs --juntar maquinas --replays liga.jsonl.gz --workers 4 --saida imitacao.json
+        run: node imitar.mjs --juntar maquinas --replays liga.jsonl.gz --workers 4 --saida imitacao.json
       - uses: actions/upload-artifact@v4
         with:
           name: imitacao
