@@ -1,6 +1,7 @@
 # Imitação dos jogadores de elite do AWBW pela CPU do awbw4 (src/ai/train/imitate.ts no awbw4).
 # Não usa o servidor nem segredos. Os replays vêm do arquivo público tiansrealm/awbw-replays
-# (replays/*.py deste repositório passam-nos a JSON: só os jogos da Global League Standard).
+# (replays/*.py deste repositório passam-nos a JSON: os jogos da Global League das ligas escolhidas;
+# nos jogos com nevoeiro a CPU só vê o que o jogador via).
 # Cada máquina afina os 46 pesos por SPSA para a CPU dar mais probabilidade às jogadas
 # humanas; no fim, uma máquina faz a média e mede-a em jogos que o treino não viu
 # (artefacto "imitacao": imitacao.json, com os pesos).
@@ -14,6 +15,11 @@ on:
         description: "Endereço do site"
         required: true
         default: "https://awbw.vitamindanswers.com"
+        type: string
+      leagues:
+        description: "Ligas dos replays (STD = Standard, FOG = com nevoeiro, HF = muito dinheiro)"
+        required: true
+        default: "STD,FOG"
         type: string
       minutes:
         description: "Minutos de afinação por máquina"
@@ -44,7 +50,7 @@ jobs:
         run: |
           git clone -q --depth 1 https://github.com/tiansrealm/awbw-replays.git arquivo
           python3 -I replays/catalogo.py arquivo catalogo.csv
-          python3 -I replays/exportar_replays.py catalogo.csv arquivo liga.jsonl.gz STD 1234
+          python3 -I replays/exportar_replays.py catalogo.csv arquivo liga.jsonl.gz "${{ inputs.leagues }}" 1234
       - uses: actions/upload-artifact@v4
         with:
           name: replays

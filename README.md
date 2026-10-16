@@ -23,7 +23,13 @@ vê-se no jogo, em "Ajudar a treinar a CPU".
    meio, envia-as e devolve o resto). Para experimentar: `shards_json` = `[1]`,
    `jobs_per_runner` = `4`.
 
+Relançamento automático: o workflow "Treino da CPU (awbw4)" também corre sozinho a cada 6 horas
+(20 máquinas). Sem campanha ativa da versão do site, cada máquina sai logo.
+
 ## Kaggle e Google Colab
+
+O notebook pronto está no site: https://awbw.vitamindanswers.com/treino/awbw4-worker.ipynb
+(e as instruções no jogo, em "Ajudar a treinar a CPU").
 
 A mesma célula serve para os dois. A chave fica nos segredos do notebook, nunca no código:
 

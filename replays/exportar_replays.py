@@ -14,15 +14,19 @@ for p in glob.glob(os.path.join(src, '**', '*.zip'), recursive=True):
     paths[b.split('_')[1] if b.startswith('replay_') else b.split('.')[0]] = p
 
 
-def g(view):
-    """A vista "global" de uma unidade/caminho (as outras são por jogador, iguais sem nevoeiro)."""
+def g(view, player=None):
+    """A vista de uma unidade/caminho: a "global" (sem nevoeiro) ou a de quem joga (com nevoeiro)."""
     if not isinstance(view, dict):
         return view
-    return view.get('global', next(iter(view.values()), None))
+    if 'global' in view:
+        return view['global']
+    if player is not None and str(player) in view:
+        return view[str(player)]
+    return next(iter(view.values()), None)
 
 
-def unit_of(a):
-    u = g(a.get('unit') or a.get('newUnit') or {})
+def unit_of(a, player=None):
+    u = g(a.get('unit') or a.get('newUnit') or {}, player)
     return u if isinstance(u, dict) else {}
 
 
@@ -37,16 +41,16 @@ def state(s):
     }
 
 
-def action(a):
+def action(a, player=None):
     k = a.get('action')
     mv = a.get('Move') if isinstance(a.get('Move'), dict) else (a if k == 'Move' else None)
     out = {'k': k}
     if mv:
-        u = unit_of(mv)
-        path = g(mv.get('paths') or {}) or []
+        u = unit_of(mv, player)
+        path = g(mv.get('paths') or {}, player) or []
         out.update({'unit': u.get('units_id'), 'path': [[p['x'], p['y']] for p in path], 'trapped': bool(mv.get('trapped'))})
     if k == 'Fire':
-        ci = (g((a.get('Fire') or {}).get('combatInfoVision') or {}) or {}).get('combatInfo') or {}
+        ci = (g((a.get('Fire') or {}).get('combatInfoVision') or {}, player) or {}).get('combatInfo') or {}
         att = ci.get('attacker') if isinstance(ci.get('attacker'), dict) else {}
         dfn = ci.get('defender') if isinstance(ci.get('defender'), dict) else {}
         out.update({'attacker': att.get('units_id'), 'target': dfn.get('units_id'), 'hpA': att.get('units_hit_points'), 'hpD': dfn.get('units_hit_points')})
@@ -54,10 +58,10 @@ def action(a):
         bi = (a.get('Capt') or {}).get('buildingInfo') or {}
         out.update({'cap': bi.get('buildings_capture'), 'bx': bi.get('buildings_x'), 'by': bi.get('buildings_y')})
     elif k == 'Build':
-        u = unit_of(a)
+        u = unit_of(a, player)
         out.update({'unit': u.get('units_id'), 'name': u.get('units_name'), 'x': u.get('units_x'), 'y': u.get('units_y')})
     elif k == 'Unload':
-        u = unit_of(a)
+        u = unit_of(a, player)
         out.update({'unit': u.get('units_id'), 'transport': a.get('transportID'), 'x': u.get('units_x'), 'y': u.get('units_y')})
     elif k == 'Power':
         out.update({'player': a.get('playerID'), 'super': a.get('coPower') == 'S', 'name': a.get('powerName')})
@@ -76,11 +80,11 @@ with gzip.open(out, 'wt', encoding='utf-8') as f:
         states, turns = read_replay(p)
         g0 = states[0]
         f.write(json.dumps({
-            'id': g0['id'], 'name': g0['name'], 'map': g0['maps_id'], 'tier': r['tier'], 'league': r['liga'],
+            'id': g0['id'], 'name': g0['name'], 'map': g0['maps_id'], 'tier': r['tier'], 'league': r['liga'], 'fog': g0['fog'] == 'Y',
             'players': [{'id': q['id'], 'country': q['countries_id'], 'co': q['co_image'].replace('.png', ''), 'order': q['order']} for q in g0['players'].values()],
             'winner': r['vencedor_ordem'], 'end': r['fim'],
             'states': [state(s) for s in states],
-            'turns': [{'player': t['player'], 'day': t['day'], 'actions': [action(a) for a in t['actions']]} for t in turns],
+            'turns': [{'player': t['player'], 'day': t['day'], 'actions': [action(a, t['player']) for a in t['actions']]} for t in turns],
         }, separators=(',', ':')) + '\n')
         n += 1
 print(f'{n} jogos -> {out}')

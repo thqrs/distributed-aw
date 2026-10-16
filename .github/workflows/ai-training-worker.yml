@@ -10,6 +10,10 @@
 name: Treino da CPU (awbw4)
 
 on:
+  # a cada 6 horas o GitHub relança as 20 máquinas sozinho (corridas longas sem ninguém a vigiar);
+  # sem campanha ativa da versão do site, cada máquina sai logo
+  schedule:
+    - cron: '17 */6 * * *'
   workflow_dispatch:
     inputs:
       site:
@@ -55,28 +59,28 @@ jobs:
       fail-fast: false
       max-parallel: 20
       matrix:
-        shard: ${{ fromJSON(inputs.shards_json) }}
+        shard: ${{ fromJSON(inputs.shards_json || '[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]') }}
     steps:
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
       - name: Descarregar o worker do site
-        run: curl -fsSL "${{ inputs.site }}/treino/remote-worker.mjs" -o awbw-worker.mjs
+        run: curl -fsSL "${{ inputs.site || 'https://awbw.vitamindanswers.com' }}/treino/remote-worker.mjs" -o awbw-worker.mjs
       - name: Jogar pares de partidas
         env:
-          AI_TRAINING_URL: ${{ inputs.site }}
+          AI_TRAINING_URL: ${{ inputs.site || 'https://awbw.vitamindanswers.com' }}
           AI_TRAINING_KEY: ${{ secrets.AI_TRAINING_KEY }}
           AI_TRAINING_CAMPAIGN: ${{ inputs.campaign }}
         shell: bash
         run: |
           if [ -z "$AI_TRAINING_KEY" ]; then echo "Falta o secret AI_TRAINING_KEY (a chave dos workers do awbw4)." >&2; exit 2; fi
           LIMIT=()
-          if [ "${{ inputs.jobs_per_runner }}" != "0" ]; then LIMIT=(--limite "${{ inputs.jobs_per_runner }}"); fi
+          if [ "${{ inputs.jobs_per_runner || '0' }}" != "0" ]; then LIMIT=(--limite "${{ inputs.jobs_per_runner }}"); fi
           # --minutos: no fim do tempo o worker acaba as partidas a meio, envia-as e devolve o resto;
           # o timeout (10 min depois, só para este processo) é uma rede de segurança
-          timeout --foreground -s INT -k 2m "$(( ${{ inputs.minutes }} + 10 ))m" \
+          timeout --foreground -s INT -k 2m "$(( ${{ inputs.minutes || '330' }} + 10 ))m" \
             node awbw-worker.mjs \
-              --minutos "${{ inputs.minutes }}" \
-              --workers "${{ inputs.workers }}" "${LIMIT[@]}" \
+              --minutos "${{ inputs.minutes || '330' }}" \
+              --workers "${{ inputs.workers || '4' }}" "${LIMIT[@]}" \
               --dispositivo "gha-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.shard }}" \
               --nome "GitHub Actions #${{ github.run_number }} máquina ${{ matrix.shard }}"
