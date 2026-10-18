@@ -10,10 +10,6 @@
 name: Treino da CPU (awbw4)
 
 on:
-  # a cada 6 horas o GitHub relança as 20 máquinas sozinho (corridas longas sem ninguém a vigiar);
-  # sem campanha ativa da versão do site, cada máquina sai logo
-  schedule:
-    - cron: '17 */6 * * *'
   workflow_dispatch:
     inputs:
       site:
